@@ -9,11 +9,23 @@ import (
 	"github.com/tidwall/redcon"
 )
 
+type Server struct {
+	role ServerRole
+}
+
+type ServerRole string
+
+const (
+	ServerRolePrimary ServerRole = "primary"
+	ServerRoleReplica ServerRole = "replica"
+)
+
 var (
-	mutationCmds = []string{"set"}
+	mutationCmds = []string{"set", "hset", "del", "hdel", "incr", "decr", "lpush", "rpush", "lpop", "rpop", "lrem", "sadd", "srem", "zadd", "zrem", "zincrby", "hincrby", "hincrbyfloat"}
 )
 
 func main() {
+	server := Server{role: "primary"}
 	err := redcon.ListenAndServe("localhost:7781",
 		func(conn redcon.Conn, cmd redcon.Command) {
 			log.Printf("Received command: %s", string(cmd.Args[0]))
@@ -28,7 +40,7 @@ func main() {
 			// Write the response back to the client
 			conn.WriteRaw(resp)
 
-			if arrutil.Contains(mutationCmds, strings.ToLower(string(cmd.Args[0]))) {
+			if server.role == "primary" && arrutil.Contains(mutationCmds, strings.ToLower(string(cmd.Args[0]))) {
 				log.Printf("Publish command to Kafka")
 			}
 		},
