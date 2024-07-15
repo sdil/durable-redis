@@ -3,6 +3,7 @@ module github.com/sdil/durable-redis
 go 1.22.5
 
 require (
+	github.com/confluentinc/confluent-kafka-go/v2 v2.5.0 // indirect
 	github.com/gookit/goutil v0.6.16 // indirect
 	github.com/tidwall/btree v1.1.0 // indirect
 	github.com/tidwall/match v1.1.1 // indirect

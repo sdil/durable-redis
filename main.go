@@ -1,8 +1,9 @@
 package main
 
 import (
+	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
 	"github.com/gookit/goutil/arrutil"
-	"log"
+	"log/slog"
 	"net"
 	"strings"
 
@@ -20,44 +21,91 @@ const (
 	ServerRoleReplica ServerRole = "replica"
 )
 
+func MutationCmds() []string {
+	return []string{"set", "hset", "del", "hdel", "incr", "decr", "lpush", "rpush", "lpop", "rpop", "lrem", "sadd", "srem", "zadd", "zrem", "zincrby", "hincrby", "hincrbyfloat"}
+}
+
 var (
-	mutationCmds = []string{"set", "hset", "del", "hdel", "incr", "decr", "lpush", "rpush", "lpop", "rpop", "lrem", "sadd", "srem", "zadd", "zrem", "zincrby", "hincrby", "hincrbyfloat"}
+	logger   *slog.Logger
+	topic    string
+	producer *kafka.Producer
 )
 
 func main() {
+	logger = slog.Default()
 	server := Server{role: "primary"}
-	err := redcon.ListenAndServe("localhost:7781",
+
+	producer, err := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": "localhost"})
+	if err != nil {
+		logger.Error("Failed to connect to Kafka", "err", err)
+	}
+	defer producer.Close()
+	topic = "redisCmd"
+
+	err = redcon.ListenAndServe("localhost:7781",
 		func(conn redcon.Conn, cmd redcon.Command) {
-			log.Printf("Received command: %s", string(cmd.Args[0]))
-
-			// Forward the command to the Redis server
-			resp, err := forwardToRedis(cmd)
-			if err != nil {
-				conn.WriteError(err.Error())
-				return
-			}
-
-			// Write the response back to the client
-			conn.WriteRaw(resp)
-
-			if server.role == "primary" && arrutil.Contains(mutationCmds, strings.ToLower(string(cmd.Args[0]))) {
-				log.Printf("Publish command to Kafka")
+			if server.role == "primary" {
+				handleCmdPrimary(conn, cmd)
+			} else {
+				handleCmdReplica(conn, cmd)
 			}
 		},
 		func(conn redcon.Conn) bool {
 			// This is called when the client connects
-			log.Printf("Client connected: %s", conn.RemoteAddr())
+			logger.Info("Client connected", "client_address", conn.RemoteAddr())
 			return true
 		},
 		func(conn redcon.Conn, err error) {
 			// This is called when the client disconnects
-			log.Printf("Client disconnected: %s", conn.RemoteAddr())
+			logger.Info("Client disconnected", "client_address", conn.RemoteAddr())
 		},
 	)
 
 	if err != nil {
-		log.Fatalf("Failed to start server: %v", err)
+		logger.Info("Failed to start server: %v", err)
 	}
+}
+
+func handleCmdPrimary(conn redcon.Conn, cmd redcon.Command) {
+	logger.Info("Received command", "cmd", string(cmd.Args[0]))
+
+	// Forward the command to the Redis server
+	resp, err := forwardToRedis(cmd)
+	if err != nil {
+		conn.WriteError(err.Error())
+		return
+	}
+
+	// Write the response back to the client
+	conn.WriteRaw(resp)
+
+	// if arrutil.Contains(MutationCmds(), strings.ToLower(string(cmd.Args[0]))) {
+	// 	logger.Info("Publish command to Kafka", "message", cmd.Raw)
+	// 	producer.Produce(&kafka.Message{
+	// 		TopicPartition: kafka.TopicPartition{Topic: &topic, Partition: kafka.PartitionAny},
+	// 		Value:          []byte(cmd.Raw),
+	// 	}, nil)
+	// }
+	return
+}
+
+func handleCmdReplica(conn redcon.Conn, cmd redcon.Command) {
+	if arrutil.Contains(MutationCmds(), strings.ToLower(string(cmd.Args[0]))) {
+		logger.Info("Reject command", "message", cmd.Raw)
+		conn.WriteRaw([]byte("-ERR This instance is read-only\r\n"))
+		return
+	}
+
+	// Forward the command to the Redis server
+	resp, err := forwardToRedis(cmd)
+	if err != nil {
+		conn.WriteError(err.Error())
+		return
+	}
+
+	// Write the response back to the client
+	conn.WriteRaw(resp)
+	return
 }
 
 func forwardToRedis(cmd redcon.Command) ([]byte, error) {
