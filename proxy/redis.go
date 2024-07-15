@@ -5,16 +5,9 @@ import (
 	"net"
 )
 
-func forwardToRedis(cmd redcon.Command) ([]byte, error) {
-	// Connect to the real Redis server
-	conn, err := net.Dial("tcp", "localhost:6379")
-	if err != nil {
-		return nil, err
-	}
-	defer conn.Close()
-
+func forwardToRedis(conn net.Conn, cmd redcon.Command) ([]byte, error) {
 	// Write the command to the Redis server
-	_, err = conn.Write(cmd.Raw)
+	_, err := conn.Write(cmd.Raw)
 	if err != nil {
 		return nil, err
 	}

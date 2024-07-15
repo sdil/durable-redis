@@ -3,6 +3,7 @@ package main
 import (
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
 	"log/slog"
+	"net"
 
 	"github.com/tidwall/redcon"
 )
@@ -16,12 +17,23 @@ var (
 	logger   *slog.Logger
 	topic    string
 	producer *kafka.Producer
+	node	 Node
 )
 
-func main() {
+func init() {
 	logger = slog.Default()
-	node := Node{role: "primary"}
+	node = Node{role: "primary"}
+}
 
+func main() {
+	// Connect to the real Redis server
+	redisConn, err := net.Dial("tcp", "localhost:6379")
+	if err != nil {
+		logger.Error("Failed to connect to Redis", "err", err)
+	}
+	defer redisConn.Close()
+
+	// Connect to Kafka
 	producer, err := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": "localhost"})
 	if err != nil {
 		logger.Error("Failed to connect to Kafka", "err", err)
@@ -32,9 +44,9 @@ func main() {
 	err = redcon.ListenAndServe("localhost:7781",
 		func(conn redcon.Conn, cmd redcon.Command) {
 			if node.role == "primary" {
-				handleCmdPrimary(conn, cmd)
+				handleCmdPrimary(conn, cmd, producer, redisConn)
 			} else {
-				handleCmdReplica(conn, cmd)
+				handleCmdReplica(conn, cmd, redisConn)
 			}
 		},
 		func(conn redcon.Conn) bool {
