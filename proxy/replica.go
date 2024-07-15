@@ -1,0 +1,27 @@
+package main
+
+import (
+	"github.com/gookit/goutil/arrutil"
+	"strings"
+
+	"github.com/tidwall/redcon"
+)
+
+func handleCmdReplica(conn redcon.Conn, cmd redcon.Command) {
+	if arrutil.Contains(MutationCmds(), strings.ToLower(string(cmd.Args[0]))) {
+		logger.Info("Reject command", "message", cmd.Raw)
+		conn.WriteRaw([]byte("-ERR This instance is read-only\r\n"))
+		return
+	}
+
+	// Forward the command to the Redis server
+	resp, err := forwardToRedis(cmd)
+	if err != nil {
+		conn.WriteError(err.Error())
+		return
+	}
+
+	// Write the response back to the client
+	conn.WriteRaw(resp)
+	return
+}
