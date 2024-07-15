@@ -9,8 +9,8 @@ import (
 )
 
 var (
-	logger   *slog.Logger
-	node	 Node
+	logger *slog.Logger
+	node   Node
 )
 
 func init() {

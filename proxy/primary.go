@@ -3,9 +3,9 @@ package main
 import (
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
 	"github.com/gookit/goutil/arrutil"
-	"strings"
 	"github.com/tidwall/redcon"
 	"net"
+	"strings"
 )
 
 func handleCmdPrimary(conn redcon.Conn, cmd redcon.Command, producer *kafka.Producer, redisConn net.Conn) {

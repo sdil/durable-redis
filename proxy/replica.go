@@ -2,8 +2,8 @@ package main
 
 import (
 	"github.com/gookit/goutil/arrutil"
-	"strings"
 	"net"
+	"strings"
 
 	"github.com/tidwall/redcon"
 )
