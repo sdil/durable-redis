@@ -21,10 +21,11 @@ func handleCmdPrimary(conn redcon.Conn, cmd redcon.Command, producer *kafka.Prod
 	// Write the response back to the client
 	conn.WriteRaw(resp)
 
-	if arrutil.Contains(MutationCmds(), strings.ToLower(string(cmd.Args[0]))) {
+	kafkaTopic := "redisCmd"
+	if arrutil.Contains(mutationCmds(), strings.ToLower(string(cmd.Args[0]))) {
 		logger.Info("Publish command to Kafka", "message", cmd.Raw)
 		producer.Produce(&kafka.Message{
-			TopicPartition: kafka.TopicPartition{Topic: &topic, Partition: kafka.PartitionAny},
+			TopicPartition: kafka.TopicPartition{Topic: &kafkaTopic, Partition: kafka.PartitionAny},
 			Value:          []byte(cmd.Raw),
 		}, nil)
 	}

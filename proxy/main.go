@@ -8,15 +8,8 @@ import (
 	"github.com/tidwall/redcon"
 )
 
-
-func MutationCmds() []string {
-	return []string{"set", "hset", "del", "hdel", "incr", "decr", "lpush", "rpush", "lpop", "rpop", "lrem", "sadd", "srem", "zadd", "zrem", "zincrby", "hincrby", "hincrbyfloat"}
-}
-
 var (
 	logger   *slog.Logger
-	topic    string
-	producer *kafka.Producer
 	node	 Node
 )
 
@@ -39,7 +32,6 @@ func main() {
 		logger.Error("Failed to connect to Kafka", "err", err)
 	}
 	defer producer.Close()
-	topic = "redisCmd"
 
 	err = redcon.ListenAndServe("localhost:7781",
 		func(conn redcon.Conn, cmd redcon.Command) {
@@ -51,16 +43,16 @@ func main() {
 		},
 		func(conn redcon.Conn) bool {
 			// This is called when the client connects
-			logger.Info("Client connected", "client_address", conn.RemoteAddr())
+			logger.Info("Client connected", "address", conn.RemoteAddr())
 			return true
 		},
 		func(conn redcon.Conn, err error) {
 			// This is called when the client disconnects
-			logger.Info("Client disconnected", "client_address", conn.RemoteAddr())
+			logger.Info("Client disconnected", "address", conn.RemoteAddr())
 		},
 	)
 
 	if err != nil {
-		logger.Info("Failed to start server: %v", err)
+		logger.Error("Failed to start server: %v", err)
 	}
 }

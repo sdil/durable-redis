@@ -5,6 +5,10 @@ import (
 	"net"
 )
 
+func mutationCmds() []string {
+	return []string{"set", "hset", "del", "hdel", "incr", "decr", "lpush", "rpush", "lpop", "rpop", "lrem", "sadd", "srem", "zadd", "zrem", "zincrby", "hincrby", "hincrbyfloat"}
+}
+
 func forwardToRedis(conn net.Conn, cmd redcon.Command) ([]byte, error) {
 	// Write the command to the Redis server
 	_, err := conn.Write(cmd.Raw)
