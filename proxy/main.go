@@ -4,8 +4,10 @@ import (
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
 	"log/slog"
 	"net"
+	"go.etcd.io/etcd/client/v3"
 
 	"github.com/tidwall/redcon"
+	"time"
 )
 
 var (
@@ -19,15 +21,35 @@ func init() {
 }
 
 func main() {
+	// Connect to etcd
+	etcdHost := "localhost:2379"
+	logger.Info("Connecting to etcd", "host", etcdHost)
+	etcd, err := clientv3.New(clientv3.Config{
+		Endpoints:   []string{etcdHost},
+		DialTimeout: 5 * time.Second,
+	})
+	if err != nil {
+		logger.Error("Failed to connect to etcd", "err", err)
+	}
+	defer etcd.Close()
+
+	go func() {
+		watchEtcd(etcd)
+	}()
+
 	// Connect to the real Redis server
-	redisConn, err := net.Dial("tcp", "localhost:6379")
+	redisHost := "localhost:6379"
+	logger.Info("Connecting to redis", "host", redisHost)
+	redisConn, err := net.Dial("tcp", redisHost)
 	if err != nil {
 		logger.Error("Failed to connect to Redis", "err", err)
 	}
 	defer redisConn.Close()
 
 	// Connect to Kafka
-	producer, err := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": "localhost"})
+	kafkaHost := "localhost"
+	logger.Info("Connecting to Kafka", "host", kafkaHost)
+	producer, err := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": kafkaHost})
 	if err != nil {
 		logger.Error("Failed to connect to Kafka", "err", err)
 	}

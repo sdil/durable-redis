@@ -27,6 +27,7 @@ func forwardToRedis(conn net.Conn, cmd redcon.Command) ([]byte, error) {
 
 func readAll(conn net.Conn) ([]byte, error) {
 	// Read the reply from the Redis server
+	// This is from ChatGPT, don't ask me how
 
 	buf := make([]byte, 0, 4096)
 	tmp := make([]byte, 4096)
