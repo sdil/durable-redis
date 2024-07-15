@@ -56,21 +56,19 @@ func main() {
 
 	// Connect to Kafka
 	kafkaHost := "localhost"
-	var producer *kafka.Producer
-	// var consumer *kafka.Consumer
-	if node.role == "primary" {
-		logger.Info("Connecting to Kafka to produce messages", "host", kafkaHost)
-		producer, err := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": kafkaHost})
-		if err != nil {
-			logger.Error("Failed to connect to Kafka", "err", err)
-		}
-		defer producer.Close()
-	} else {
-		logger.Info("Connecting to Kafka to consume messages")
-		go func() {
-			logger.Info("Replaying all redis commands from Kafka")
-		}()
+	logger.Info("Connecting to Kafka to produce messages", "host", kafkaHost)
+	producer, err := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": kafkaHost})
+	if err != nil {
+		logger.Error("Failed to connect to Kafka", "err", err)
 	}
+	logger.Info("Connected to Kafka", "producer", producer)
+	defer producer.Close()
+
+	// 	logger.Info("Connecting to Kafka to consume messages")
+	// 	go func() {
+	// 		logger.Info("Replaying all redis commands from Kafka")
+	// 	}()
+	// }
 
 	connections := map[redcon.Conn]Connection{}
 
@@ -88,6 +86,7 @@ func main() {
 			connection := Connection{id: rand.IntN(1000), address: conn.RemoteAddr()}
 			connections[conn] = connection
 			logger.Info("Client connected", "total", len(connections), "clients", connections)
+			conn.NetConn().SetDeadline(time.Now().Add(10 * time.Second))
 			return true
 		},
 		func(conn redcon.Conn, err error) {
