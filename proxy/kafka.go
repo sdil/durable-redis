@@ -7,7 +7,7 @@ import (
 )
 
 func handleKafkaMsg(msg *kafka.Message, redisConn net.Conn) {
-	if node.role == "replica" {
+	if node.Role == "replica" {
 		logger.Info("Forwarding message to Redis server", "msg", msg)
 		cmd := redcon.Command{Raw: msg.Value}
 		resp, err := forwardToRedis(redisConn, cmd)

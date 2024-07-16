@@ -1,7 +1,7 @@
 package main
 
 type Node struct {
-	role NodeRole
+	Role NodeRole
 }
 
 type NodeRole string

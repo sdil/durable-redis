@@ -1,9 +1,15 @@
 package main
 
 import (
+	"context"
+	"flag"
 	"log/slog"
 	"math/rand/v2"
 	"net"
+	"os"
+	"os/signal"
+	"strconv"
+	"syscall"
 
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
 	"go.etcd.io/etcd/client/v3"
@@ -14,13 +20,14 @@ import (
 )
 
 var (
-	logger *slog.Logger
-	node   Node
+	logger   *slog.Logger
+	node     Node
+	universe map[string]Node
 )
 
 func init() {
 	logger = slog.Default()
-	node = Node{role: "replica"}
+	universe = map[string]Node{}
 }
 
 type Connection struct {
@@ -29,6 +36,17 @@ type Connection struct {
 }
 
 func main() {
+	var nodeRole = flag.String("role", "primary", "Either primary or replica")
+	var port = flag.Int("port", 7781, "Which port to listen on")
+	flag.Parse()
+
+	logger.Info("Starting proxy", "role", *nodeRole, "port", *port)
+	node = Node{Role: NodeRole(*nodeRole)}
+
+	ownIp := GetLocalIP() + ":" + strconv.Itoa(*port)
+	// Initialize the world view
+	universe[ownIp] = node
+
 	// Connect to etcd
 	etcdHost := "localhost:2379"
 	logger.Info("Connecting to etcd", "host", etcdHost)
@@ -41,8 +59,21 @@ func main() {
 	}
 	defer etcd.Close()
 
+	RegisterNode(etcd, ownIp, &node)
+	// Build universe
+	res, err := etcd.Get(context.Background(), "/proxy/", clientv3.WithPrefix())
+	if err != nil {
+		logger.Error("Failed to get etcd data", "err", err)
+	}
+	for _, proxy := range res.Kvs {
+		logger.Info("Found proxies", "ip", proxy.Key, "role", proxy.Value)
+		ip := string(proxy.Key)[7:]
+		universe[ip] = Node{Role: NodeRole(string(proxy.Value))}
+	}
+	logger.Info("World view", "nodes", universe)
+
 	go func() {
-		watchEtcd(etcd)
+		WatchEtcd(etcd)
 	}()
 
 	// Connect to the real Redis server
@@ -92,35 +123,51 @@ func main() {
 
 	connections := map[redcon.Conn]Connection{}
 
-	err = redcon.ListenAndServe("localhost:7781",
-		func(conn redcon.Conn, cmd redcon.Command) {
-			if node.role == "primary" {
-				handleCmdPrimary(conn, cmd, producer, redisConn)
-			} else {
-				handleCmdReplica(conn, cmd, redisConn)
-			}
-			logger.Info("Command responded", "connection", connections[conn])
-		},
-		func(conn redcon.Conn) bool {
-			// This is called when the client connects
-			logger.Info("Client connected", "address", conn.RemoteAddr())
-			connection := Connection{id: rand.IntN(1000), address: conn.RemoteAddr()}
-			connections[conn] = connection
-			logger.Info("Client connected", "total", len(connections), "clients", connections)
+	go func() {
+		err = redcon.ListenAndServe("localhost:"+strconv.Itoa(*port),
+			func(conn redcon.Conn, cmd redcon.Command) {
+				if node.Role == "primary" {
+					handleCmdPrimary(conn, cmd, producer, redisConn)
+				} else {
+					handleCmdReplica(conn, cmd, redisConn)
+				}
+				logger.Info("Command responded", "connection", connections[conn])
+			},
+			func(conn redcon.Conn) bool {
+				// This is called when the client connects
+				logger.Info("Client connected", "address", conn.RemoteAddr())
+				connection := Connection{id: rand.IntN(1000), address: conn.RemoteAddr()}
+				connections[conn] = connection
+				logger.Info("Client connected", "total", len(connections), "clients", connections)
 
-			// Set a read deadline causes issues with the connection
-			// conn.NetConn().SetDeadline(time.Now().Add(10 * time.Second))
-			return true
-		},
-		func(conn redcon.Conn, err error) {
-			// This is called when the client disconnects
-			logger.Info("Client disconnected", "address", conn.RemoteAddr())
-			delete(connections, conn)
-			logger.Info("Client connected", "total", len(connections), "clients", connections)
-		},
-	)
+				// Set a read deadline causes issues with the connection
+				// conn.NetConn().SetDeadline(time.Now().Add(10 * time.Second))
+				return true
+			},
+			func(conn redcon.Conn, err error) {
+				// This is called when the client disconnects
+				logger.Info("Client disconnected", "address", conn.RemoteAddr())
+				delete(connections, conn)
+				logger.Info("Client connected", "total", len(connections), "clients", connections)
+			},
+		)
 
+		if err != nil {
+			logger.Error("Failed to start server", "error", err)
+		}
+	}()
+
+	// Capture SIGINT and SIGTERM signals for graceful shutdown
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+
+	<-signals
+
+	logger.Info("Deleting node", "node", ownIp)
+	_, err = etcd.Delete(context.Background(), "/proxy/"+ownIp)
 	if err != nil {
-		logger.Error("Failed to start server", "error", err)
+		logger.Error("Failed to delete node", "err", err)
 	}
+
+	logger.Info("Shutting down gracefully")
 }
