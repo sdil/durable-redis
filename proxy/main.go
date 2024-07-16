@@ -20,7 +20,7 @@ var (
 
 func init() {
 	logger = slog.Default()
-	node = Node{role: "primary"}
+	node = Node{role: "replica"}
 }
 
 type Connection struct {
@@ -61,7 +61,6 @@ func main() {
 	if err != nil {
 		logger.Error("Failed to connect to Kafka", "err", err)
 	}
-	logger.Info("Connected to Kafka", "producer", producer)
 	defer producer.Close()
 
 	logger.Info("Connecting to Kafka to consume messages")
@@ -84,23 +83,8 @@ func main() {
 		for {
 			msg, err := consumer.ReadMessage(time.Second)
 			if err == nil {
-				if node.role == "primary" {
-					logger.Info("Ignoring message since I am the primary", "msg", msg.Value)
-					cmd := redcon.Command{Raw: msg.Value}
-					logger.Info("redis command", "cmd", string(cmd.Raw))
-				} else {
-					logger.Info("Forwarding message to Redis server", "msg", msg)
-					cmd := redcon.Command{Raw: msg.Value}
-					resp, err := forwardToRedis(redisConn, cmd)
-					if err != nil {
-						logger.Error("Failed to forward message to Redis", "err", err, "resp", resp)
-						return
-					}
-				}
+				handleKafkaMsg(msg, redisConn)
 			} else if !err.(kafka.Error).IsTimeout() {
-				// The client will automatically try to recover from all errors.
-				// Timeout is not considered an error because it is raised by
-				// ReadMessage in absence of messages.
 				logger.Info("Consumer error: %v (%v)\n", err, msg)
 			}
 		}

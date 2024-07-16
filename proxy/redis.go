@@ -2,7 +2,6 @@ package main
 
 import (
 	"net"
-	"strings"
 
 	"github.com/tidwall/redcon"
 )
@@ -26,7 +25,7 @@ func forwardToRedis(conn net.Conn, cmd redcon.Command) ([]byte, error) {
 		return nil, err
 	}
 
-	if !strings.Contains(string(resp), "summary") {
+	if len(string(resp)) < 1000 {
 		logger.Info("Redis response", "resp", string(resp))
 	}
 
