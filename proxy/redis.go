@@ -1,8 +1,10 @@
 package main
 
 import (
-	"github.com/tidwall/redcon"
 	"net"
+	"strings"
+
+	"github.com/tidwall/redcon"
 )
 
 func mutationCmds() []string {
@@ -11,6 +13,7 @@ func mutationCmds() []string {
 
 func forwardToRedis(conn net.Conn, cmd redcon.Command) ([]byte, error) {
 	// Write the command to the Redis server
+	logger.Info("Forwading redis cmd", "raw", string(cmd.Raw))
 	_, err := conn.Write(cmd.Raw)
 	if err != nil {
 		return nil, err
@@ -19,7 +22,12 @@ func forwardToRedis(conn net.Conn, cmd redcon.Command) ([]byte, error) {
 	// Read the response from the Redis server
 	resp, err := readAll(conn)
 	if err != nil {
+		logger.Info("Redis error", "error", string(err.Error()))
 		return nil, err
+	}
+
+	if !strings.Contains(string(resp), "summary") {
+		logger.Info("Redis response", "resp", string(resp))
 	}
 
 	return resp, nil

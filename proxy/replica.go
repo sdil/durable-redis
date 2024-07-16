@@ -24,5 +24,4 @@ func handleCmdReplica(conn redcon.Conn, cmd redcon.Command, redisConn net.Conn) 
 
 	// Write the response back to the client
 	conn.WriteRaw(resp)
-	return
 }

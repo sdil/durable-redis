@@ -64,11 +64,47 @@ func main() {
 	logger.Info("Connected to Kafka", "producer", producer)
 	defer producer.Close()
 
-	// 	logger.Info("Connecting to Kafka to consume messages")
-	// 	go func() {
-	// 		logger.Info("Replaying all redis commands from Kafka")
-	// 	}()
-	// }
+	logger.Info("Connecting to Kafka to consume messages")
+	consumer, err := kafka.NewConsumer(&kafka.ConfigMap{
+		"bootstrap.servers": "localhost",
+		"group.id":          "myGroup",
+		"auto.offset.reset": "earliest",
+	})
+	if err != nil {
+		logger.Error("Failed to consume Kafka messages", "err", err)
+	}
+	defer consumer.Close()
+
+	err = consumer.SubscribeTopics([]string{"redisCmd"}, nil)
+	if err != nil {
+		logger.Error("Failed to subscribe", "err", err)
+	}
+
+	go func() {
+		for {
+			msg, err := consumer.ReadMessage(time.Second)
+			if err == nil {
+				if node.role == "primary" {
+					logger.Info("Ignoring message since I am the primary", "msg", msg.Value)
+					cmd := redcon.Command{Raw: msg.Value}
+					logger.Info("redis command", "cmd", string(cmd.Raw))
+				} else {
+					logger.Info("Forwarding message to Redis server", "msg", msg)
+					cmd := redcon.Command{Raw: msg.Value}
+					resp, err := forwardToRedis(redisConn, cmd)
+					if err != nil {
+						logger.Error("Failed to forward message to Redis", "err", err, "resp", resp)
+						return
+					}
+				}
+			} else if !err.(kafka.Error).IsTimeout() {
+				// The client will automatically try to recover from all errors.
+				// Timeout is not considered an error because it is raised by
+				// ReadMessage in absence of messages.
+				logger.Info("Consumer error: %v (%v)\n", err, msg)
+			}
+		}
+	}()
 
 	connections := map[redcon.Conn]Connection{}
 
@@ -79,6 +115,7 @@ func main() {
 			} else {
 				handleCmdReplica(conn, cmd, redisConn)
 			}
+			logger.Info("Command responded", "connection", connections[conn])
 		},
 		func(conn redcon.Conn) bool {
 			// This is called when the client connects
@@ -86,7 +123,9 @@ func main() {
 			connection := Connection{id: rand.IntN(1000), address: conn.RemoteAddr()}
 			connections[conn] = connection
 			logger.Info("Client connected", "total", len(connections), "clients", connections)
-			conn.NetConn().SetDeadline(time.Now().Add(10 * time.Second))
+
+			// Set a read deadline causes issues with the connection
+			// conn.NetConn().SetDeadline(time.Now().Add(10 * time.Second))
 			return true
 		},
 		func(conn redcon.Conn, err error) {
