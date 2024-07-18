@@ -2,6 +2,7 @@ package main
 
 type Node struct {
 	Role NodeRole
+	IP  string
 }
 
 type NodeRole string

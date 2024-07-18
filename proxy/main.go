@@ -12,7 +12,7 @@ import (
 	"syscall"
 
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
-	"go.etcd.io/etcd/client/v3"
+	etcdclient "go.etcd.io/etcd/client/v3"
 
 	"time"
 
@@ -20,9 +20,12 @@ import (
 )
 
 var (
-	logger   *slog.Logger
-	node     Node
-	universe map[string]Node
+	logger     *slog.Logger
+	node       Node
+	universe   map[string]Node
+	nodeRole   = flag.String("role", "primary", "Either primary or replica")
+	port       = flag.Int("port", 7781, "Which port to listen on")
+	leaderNode Node
 )
 
 func init() {
@@ -36,21 +39,17 @@ type Connection struct {
 }
 
 func main() {
-	var nodeRole = flag.String("role", "primary", "Either primary or replica")
-	var port = flag.Int("port", 7781, "Which port to listen on")
 	flag.Parse()
 
 	logger.Info("Starting proxy", "role", *nodeRole, "port", *port)
-	node = Node{Role: NodeRole(*nodeRole)}
-
 	ownIp := GetLocalIP() + ":" + strconv.Itoa(*port)
-	// Initialize the world view
-	universe[ownIp] = node
+	node = Node{Role: NodeRole(*nodeRole), IP: ownIp}
+	logger.Info("My IP", "ip", ownIp)
 
 	// Connect to etcd
 	etcdHost := "localhost:2379"
 	logger.Info("Connecting to etcd", "host", etcdHost)
-	etcd, err := clientv3.New(clientv3.Config{
+	etcd, err := etcdclient.New(etcdclient.Config{
 		Endpoints:   []string{etcdHost},
 		DialTimeout: 5 * time.Second,
 	})
@@ -60,21 +59,17 @@ func main() {
 	defer etcd.Close()
 
 	RegisterNode(etcd, ownIp, &node)
-	// Build universe
-	res, err := etcd.Get(context.Background(), "/proxy/", clientv3.WithPrefix())
-	if err != nil {
-		logger.Error("Failed to get etcd data", "err", err)
-	}
-	for _, proxy := range res.Kvs {
-		logger.Info("Found proxies", "ip", proxy.Key, "role", proxy.Value)
-		ip := string(proxy.Key)[7:]
-		universe[ip] = Node{Role: NodeRole(string(proxy.Value))}
-	}
-	logger.Info("World view", "nodes", universe)
-
+	GetPeerNodes(etcd)
 	go func() {
-		WatchEtcd(etcd)
+		WatchPeerNodes(etcd)
 	}()
+	// Perform leader election
+	go func() {
+		if err := ElectLeader(etcd, ownIp); err != nil {
+			logger.Error("Failed to elect leader", "err", err)
+		}
+	}()
+	// ObserveLeader(etcd)
 
 	// Connect to the real Redis server
 	redisHost := "localhost:6379"
@@ -113,6 +108,9 @@ func main() {
 	go func() {
 		for {
 			msg, err := consumer.ReadMessage(time.Second)
+			if msg != nil {
+				logger.Info("Received message", "msg", msg)
+			}
 			if err == nil {
 				handleKafkaMsg(msg, redisConn)
 			} else if !err.(kafka.Error).IsTimeout() {
@@ -126,7 +124,7 @@ func main() {
 	go func() {
 		err = redcon.ListenAndServe("localhost:"+strconv.Itoa(*port),
 			func(conn redcon.Conn, cmd redcon.Command) {
-				if node.Role == "primary" {
+				if node.Role == "primary" && node.IP == leaderNode.IP {
 					handleCmdPrimary(conn, cmd, producer, redisConn)
 				} else {
 					handleCmdReplica(conn, cmd, redisConn)
